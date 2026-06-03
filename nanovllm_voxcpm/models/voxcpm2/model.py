@@ -434,7 +434,7 @@ class UnifiedCFM(nn.Module):
         seeds: torch.Tensor | None = None
     ):
         bsz = mu.shape[0]
-        if seeds is not None:
+        if seeds is not None and not torch.cuda.is_current_stream_capturing():
             z = torch.empty((bsz, self.in_channels, self.patch_size), device=mu.device, dtype=mu.dtype)
             for i in range(bsz):
                 seed_val = int(seeds[i].item())
