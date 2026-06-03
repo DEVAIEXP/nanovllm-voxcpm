@@ -62,7 +62,7 @@ class VoxCPM2Runner(BaseModelRunner):
             "feat_mask": torch.zeros(batch_size * length, dtype=torch.bool),
             "temperature": torch.zeros(batch_size),
             "cfg_value": torch.zeros(batch_size),
-            "seeds": torch.full((batch_size,), -1, dtype=torch.int64),
+            "z_noise": torch.zeros(batch_size, self.feat_dim, self.patch_size, dtype=self.dtype),
         }
 
     def make_dummy_outputs(self, batch_size: int) -> dict[str, torch.Tensor]:
@@ -91,8 +91,7 @@ class VoxCPM2Runner(BaseModelRunner):
         feats = []
         feat_masks = []
         temperatures = []
-        cfg_values = []
-        seeds = []
+        cfg_values = []        
         for seq in seqs:
             payload = seq.custom_payload
             assert payload.text_tokens.shape[0] == payload.feats.shape[0]
@@ -102,8 +101,7 @@ class VoxCPM2Runner(BaseModelRunner):
             feat_masks.append(payload.feat_masks)
             temperatures.append(payload.temperature)
             cfg_values.append(payload.cfg_value)
-            seeds.append(payload.seed if payload.seed is not None else -1)
-
+            
         inputs["text_tokens"] = torch.from_numpy(np.concatenate(text_tokens, axis=0)).cuda(non_blocking=True)
         inputs["feat"] = torch.from_numpy(np.concatenate(feats, axis=0)).cuda(non_blocking=True).to(self.dtype)
         inputs["feat_mask"] = torch.from_numpy(np.concatenate(feat_masks, axis=0)).cuda(non_blocking=True)
@@ -113,15 +111,28 @@ class VoxCPM2Runner(BaseModelRunner):
         inputs["cfg_value"] = (
             torch.tensor(cfg_values, dtype=torch.float32, pin_memory=True).cuda(non_blocking=True).to(self.dtype)
         )
-        inputs["seeds"] = torch.tensor(seeds, dtype=torch.int64).cuda(non_blocking=True)
-
+        
+        # Generate z_noise for each sequence based on the seed value in the payload
+        bsz = len(seqs)
+        z_noise = torch.empty((bsz, self.feat_dim, self.patch_size), dtype=self.dtype, device="cuda")
+        for i, seq in enumerate(seqs):
+            seed_val = seq.custom_payload.seed
+            if seed_val is not None and seed_val >= 0:
+                generator = torch.Generator(device="cuda").manual_seed(int(seed_val))
+            else:
+                generator = None
+            z_noise[i] = torch.randn((self.feat_dim, self.patch_size), generator=generator, dtype=self.dtype, device="cuda")
+        
+        inputs["z_noise"] = z_noise
+        
         outputs = self.run_model(inputs, is_prefill)
         latents = outputs["latents"]
-
+        
         pad_lengths = [
             seq.custom_payload.padding_decode.shape[0] if seq.custom_payload.padding_decode is not None else 0
             for seq in seqs
         ]
+        
         max_pad_decode = max(pad_lengths) + self.patch_size
         vae_decoder_inputs = torch.zeros(len(seqs), max_pad_decode, self.feat_dim, dtype=torch.float32, device="cuda")
         for i, seq in enumerate(seqs):

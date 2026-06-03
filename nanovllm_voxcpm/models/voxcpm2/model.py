@@ -431,19 +431,12 @@ class UnifiedCFM(nn.Module):
         cond: torch.Tensor,
         temperature: torch.Tensor,
         cfg_value: torch.Tensor,
-        seeds: torch.Tensor | None = None
+        z_noise: torch.Tensor | None = None,
     ):
         bsz = mu.shape[0]
-        if seeds is not None and not torch.cuda.is_current_stream_capturing():
-            z = torch.empty((bsz, self.in_channels, self.patch_size), device=mu.device, dtype=mu.dtype)
-            for i in range(bsz):
-                seed_val = int(seeds[i].item())
-                if seed_val >= 0:
-                    generator = torch.Generator(device=mu.device).manual_seed(seed_val)
-                else:
-                    generator = None
-                z[i] = torch.randn((self.in_channels, self.patch_size), generator=generator, device=mu.device, dtype=mu.dtype)
-        else: #Default Fallback
+        if z_noise is not None:            
+            z = z_noise
+        else:            
             z = torch.randn((bsz, self.in_channels, self.patch_size), device=mu.device, dtype=mu.dtype)
         
         z = z * temperature[:, None, None]
@@ -577,7 +570,7 @@ class VoxCPM2Model(nn.Module):
             inference_timesteps=inference_timesteps,
             cfm_params=config.dit_config.cfm_config,
             estimator=VoxCPM2LocDiT(decoder_config, in_channels=config.feat_dim, lora_config=lora_config),
-            mean_mode=config.dit_mean_mode,
+            mean_mode=config.dit_mean_mode,            
         )
 
         self.fsq_layer = ScalarQuantizationLayer(
@@ -648,7 +641,7 @@ class VoxCPM2Model(nn.Module):
         feat_mask: torch.Tensor,
         temperature: torch.Tensor,
         cfg_value: torch.Tensor,
-        seeds: torch.Tensor | None = None,
+        z_noise: torch.Tensor | None = None, 
     ):
         feat_embeds = self.enc_to_lm_proj(self.feat_encoder(feat))
         feat_embeds = torch.masked_fill(feat_embeds, feat_mask.unsqueeze(-1).logical_not(), 0)
@@ -682,7 +675,7 @@ class VoxCPM2Model(nn.Module):
             cond=prefix_feat_cond.transpose(1, 2).contiguous(),
             temperature=temperature,
             cfg_value=cfg_value,
-            seeds=seeds,
+            z_noise=z_noise,
         ).transpose(1, 2)
         stop_flag = self.stop_head(self.stop_actn(self.stop_proj(lm_hidden))).argmax(dim=-1)
         return {"latents": pred_feat, "stop_flag": stop_flag}

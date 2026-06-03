@@ -636,7 +636,7 @@ class UnifiedCFM(torch.nn.Module):
         cond: torch.Tensor,
         temperature: torch.Tensor,
         cfg_value: torch.Tensor,
-        seeds: torch.Tensor | None = None, 
+        z_noise: torch.Tensor | None = None,
     ):
         """Forward diffusion
 
@@ -647,6 +647,7 @@ class UnifiedCFM(torch.nn.Module):
             cond: Not used but kept for future purposes
             temperature (torch.Tensor): temperature for scaling noise. (batch_size,)
             cfg_value (torch.Tensor): cfg value for guidance. (batch_size,)
+            z_noise (torch.Tensor, optional): pre-generated seeded noise. (batch_size, in_channels, patch_size)
 
         Returns:
             sample: generated mel-spectrogram
@@ -654,21 +655,13 @@ class UnifiedCFM(torch.nn.Module):
         """
         b, c = mu.shape
         t = self.patch_size
-        
-        if seeds is not None and not torch.cuda.is_current_stream_capturing():
-            z = torch.empty((b, self.in_channels, t), device=mu.device, dtype=mu.dtype)
-            for i in range(b):
-                seed_val = int(seeds[i].item())
-                if seed_val >= 0:                    
-                    generator = torch.Generator(device=mu.device).manual_seed(seed_val)
-                else:                    
-                    generator = None
-                z[i] = torch.randn((self.in_channels, t), generator=generator, device=mu.device, dtype=mu.dtype)
+       
+        if z_noise is not None:
+            z = z_noise
         else:
-            # Default Fallback
             z = torch.randn((b, self.in_channels, t), device=mu.device, dtype=mu.dtype)
 
-        z = z * temperature[:, None, None]
+        z = z * temperature[:, None, None]        
         t_span = torch.linspace(1, 0, self.inference_timesteps + 1, device=mu.device, dtype=mu.dtype)        
         # Sway sampling strategy
         t_span = t_span + (torch.cos(torch.pi / 2 * t_span) - 1 + t_span)
@@ -911,7 +904,7 @@ class VoxCPMModel(nn.Module):
         feat_mask: torch.Tensor,
         temperature: torch.Tensor,
         cfg_value: torch.Tensor,
-        seeds: torch.Tensor | None = None,
+        z_noise: torch.Tensor | None = None, 
     ):
         """
         text_tokens: [T]
@@ -970,7 +963,7 @@ class VoxCPMModel(nn.Module):
             cond=prefix_feat_cond.transpose(1, 2).contiguous(),
             temperature=temperature,
             cfg_value=cfg_value,
-            seeds=seeds,
+            z_noise=z_noise,
         ).transpose(1, 2)
 
         stop_flag = self.stop_head(self.stop_actn(self.stop_proj(lm_hidden))).argmax(dim=-1)
