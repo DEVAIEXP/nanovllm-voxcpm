@@ -21,7 +21,7 @@ class VoxCPM2Payload:
     temperature: float = 1.0
     cfg_value: float = 1.0
     padding_decode: np.ndarray | None = None
-
+    seed: int | None = None
 
 class VoxCPM2Runner(BaseModelRunner):
     model: VoxCPM2Model
@@ -62,6 +62,7 @@ class VoxCPM2Runner(BaseModelRunner):
             "feat_mask": torch.zeros(batch_size * length, dtype=torch.bool),
             "temperature": torch.zeros(batch_size),
             "cfg_value": torch.zeros(batch_size),
+            "seeds": torch.full((batch_size,), -1, dtype=torch.int64),
         }
 
     def make_dummy_outputs(self, batch_size: int) -> dict[str, torch.Tensor]:
@@ -91,6 +92,7 @@ class VoxCPM2Runner(BaseModelRunner):
         feat_masks = []
         temperatures = []
         cfg_values = []
+        seeds = []
         for seq in seqs:
             payload = seq.custom_payload
             assert payload.text_tokens.shape[0] == payload.feats.shape[0]
@@ -100,6 +102,7 @@ class VoxCPM2Runner(BaseModelRunner):
             feat_masks.append(payload.feat_masks)
             temperatures.append(payload.temperature)
             cfg_values.append(payload.cfg_value)
+            seeds.append(payload.seed if payload.seed is not None else -1)
 
         inputs["text_tokens"] = torch.from_numpy(np.concatenate(text_tokens, axis=0)).cuda(non_blocking=True)
         inputs["feat"] = torch.from_numpy(np.concatenate(feats, axis=0)).cuda(non_blocking=True).to(self.dtype)
@@ -110,6 +113,7 @@ class VoxCPM2Runner(BaseModelRunner):
         inputs["cfg_value"] = (
             torch.tensor(cfg_values, dtype=torch.float32, pin_memory=True).cuda(non_blocking=True).to(self.dtype)
         )
+        inputs["seeds"] = torch.tensor(seeds, dtype=torch.int64).cuda(non_blocking=True)
 
         outputs = self.run_model(inputs, is_prefill)
         latents = outputs["latents"]
